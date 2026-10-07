@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#0b0f1a" />
+<title>Agent Studio — Real Android AI Agent + Web Builder</title>
+<meta name="description" content="Web console for the Real Android AI Agent and Web Builder: plan device actions with Gemini, run Python, build and deploy websites." />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" href="icons/icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta property="og:title" content="Agent Studio" />
+<meta property="og:description" content="Plan device actions with Gemini, run Python, build and deploy websites — one console." />
+<meta property="og:type" content="website" />
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div id="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="4" y="3" width="16" height="18" rx="3"/><path d="M9 8h6M9 12h6M9 16h3"/>
+        </svg>
+      </span>
+      <span class="brand-text">Agent <b>Studio</b></span>
+    </div>
+    <button id="connPill" class="pill" type="button" title="Connection status">
+      <span class="dot" id="connDot"></span><span id="connLabel">Offline mode</span>
+    </button>
+  </header>
+
+  <nav class="sidebar" aria-label="Sections">
+    <button class="nav-btn active" data-view="planner">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+      <span>Planner</span>
+    </button>
+    <button class="nav-btn" data-view="builder">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v14H3z"/><path d="M3 9h18M8 21h8M12 17v4"/></svg>
+      <span>Web Builder</span>
+    </button>
+    <button class="nav-btn" data-view="python">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
+      <span>Python</span>
+    </button>
+    <button class="nav-btn" data-view="settings">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <span>Settings</span>
+    </button>
+  </nav>
+
+  <main class="content">
+    <!-- PLANNER -->
+    <section class="view active" id="view-planner">
+      <div class="view-head">
+        <h1>Action Planner</h1>
+        <p class="sub">Describe what you want the Android device to do. The agent returns a validated, allow-listed command your app can execute.</p>
+      </div>
+
+      <div class="card">
+        <label class="field">
+          <span>Command</span>
+          <textarea id="plannerInput" rows="3" placeholder="e.g. Open WhatsApp, or Share this text: meeting at 5pm"></textarea>
+        </label>
+        <div class="row gap wrap">
+          <button id="planBtn" class="btn primary">Plan action</button>
+          <label class="toggle"><input type="checkbox" id="allowSensitive" /> <span>Allow sensitive actions</span></label>
+        </div>
+        <div class="chips" id="plannerChips">
+          <button class="chip" data-cmd="Open WhatsApp">Open WhatsApp</button>
+          <button class="chip" data-cmd="Open wifi settings">Open wifi settings</button>
+          <button class="chip" data-cmd="Go back">Go back</button>
+          <button class="chip" data-cmd="Copy this to clipboard: hello world">Copy to clipboard</button>
+        </div>
+      </div>
+
+      <div id="plannerOutput" class="output" aria-live="polite"></div>
+    </section>
+
+    <!-- BUILDER -->
+    <section class="view" id="view-builder">
+      <div class="view-head">
+        <h1>Web Builder</h1>
+        <p class="sub">Write project files, preview live, validate, download a ZIP, or deploy to Netlify.</p>
+      </div>
+
+      <div class="builder-grid">
+        <div class="card">
+          <div class="row between center">
+            <strong>Files</strong>
+            <div class="row gap">
+              <button id="addFileBtn" class="btn ghost small">+ Add</button>
+              <button id="loadTemplateBtn" class="btn ghost small">Template</button>
+            </div>
+          </div>
+          <ul id="fileList" class="file-list"></ul>
+        </div>
+
+        <div class="card">
+          <div class="row between center">
+            <strong id="editorTitle">Select a file</strong>
+            <button id="deleteFileBtn" class="btn ghost small danger">Delete</button>
+          </div>
+          <textarea id="fileEditor" class="code" rows="12" spellcheck="false" placeholder="File contents appear here…"></textarea>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row between center wrap gap">
+          <div class="row gap wrap">
+            <label class="field inline"><span>Framework</span>
+              <select id="framework">
+                <option value="static">static</option>
+                <option value="react">react</option>
+                <option value="next">next</option>
+                <option value="vue">vue</option>
+                <option value="python">python</option>
+              </select>
+            </label>
+            <label class="field inline grow"><span>Build command</span>
+              <input id="buildCommand" placeholder="e.g. npm run build (blank for static)" />
+            </label>
+          </div>
+          <div class="row gap wrap">
+            <button id="previewBtn" class="btn">Preview</button>
+            <button id="validateBtn" class="btn">Validate</button>
+            <button id="zipBtn" class="btn">Download ZIP</button>
+            <button id="deployBtn" class="btn primary">Deploy to Netlify</button>
+          </div>
+        </div>
+        <div id="builderLog" class="console" aria-live="polite"></div>
+      </div>
+
+      <div class="card">
+        <div class="row between center">
+          <strong>Live preview</strong>
+          <button id="closePreviewBtn" class="btn ghost small">Close</button>
+        </div>
+        <iframe id="previewFrame" class="preview" title="Project preview" sandbox="allow-scripts allow-forms allow-modals allow-popups"></iframe>
+      </div>
+    </section>
+
+    <!-- PYTHON -->
+    <section class="view" id="view-python">
+      <div class="view-head">
+        <h1>Python Runner</h1>
+        <p class="sub">Execute Python. Runs in your browser (Pyodide) in offline mode, or in the backend sandbox when connected.</p>
+      </div>
+      <div class="card">
+        <label class="field"><span>Code</span>
+          <textarea id="pyCode" class="code" rows="10" spellcheck="false">print("Hello from Agent Studio")
+for i in range(3):
+    print("line", i)</textarea>
+        </label>
+        <label class="field"><span>stdin (optional)</span>
+          <input id="pyStdin" placeholder="Input passed to your program" />
+        </label>
+        <div class="row gap wrap">
+          <button id="runPyBtn" class="btn primary">Run</button>
+          <span class="hint" id="pyEngineHint"></span>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row between center"><strong>Output</strong><span class="hint" id="pyStatus"></span></div>
+        <pre id="pyOut" class="console" aria-live="polite"></pre>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="view" id="view-settings">
+      <div class="view-head">
+        <h1>Settings</h1>
+        <p class="sub">Everything is stored only in this browser (localStorage). Nothing is sent anywhere except the services you configure.</p>
+      </div>
+
+      <div class="card">
+        <h2>Backend (optional)</h2>
+        <p class="hint">Connect to the FastAPI service to use its authenticated APIs and sandboxed Python. Leave blank to run fully in-browser.</p>
+        <label class="field"><span>Backend URL</span><input id="sBackendUrl" placeholder="https://your-backend.example.com" /></label>
+        <div class="row gap wrap">
+          <label class="field grow"><span>Username</span><input id="sUser" placeholder="admin" autocomplete="username" /></label>
+          <label class="field grow"><span>Password</span><input id="sPass" type="password" placeholder="password" autocomplete="current-password" /></label>
+        </div>
+        <div class="row gap wrap">
+          <button id="loginBtn" class="btn">Log in</button>
+          <button id="healthBtn" class="btn ghost">Check health</button>
+          <button id="logoutBtn" class="btn ghost danger">Log out</button>
+        </div>
+        <p class="hint" id="authState">Not logged in.</p>
+      </div>
+
+      <div class="card">
+        <h2>Direct APIs (offline mode)</h2>
+        <label class="field"><span>Gemini API key</span><input id="sGeminiKey" type="password" placeholder="AIza…" /></label>
+        <label class="field"><span>Gemini model</span><input id="sGeminiModel" placeholder="gemini-2.5-flash" /></label>
+        <label class="field"><span>Netlify token</span><input id="sNetlifyToken" type="password" placeholder="nfp_…" /></label>
+        <label class="field"><span>Netlify site id (optional)</span><input id="sNetlifySite" placeholder="leave blank to create a new site" /></label>
+        <div class="row gap wrap">
+          <button id="saveSettingsBtn" class="btn primary">Save</button>
+          <button id="clearSettingsBtn" class="btn ghost danger">Clear all</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>About</h2>
+        <p class="hint">Agent Studio is the web console for the <b>Real Android AI Agent + Web Builder</b> project. Planning follows the project's allow-list: only declared tools with validated arguments are ever produced.</p>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar" aria-label="Sections">
+    <button class="tab-btn active" data-view="planner"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>Planner</span></button>
+    <button class="tab-btn" data-view="builder"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v14H3z"/><path d="M3 9h18M8 21h8M12 17v4"/></svg><span>Builder</span></button>
+    <button class="tab-btn" data-view="python"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg><span>Python</span></button>
+    <button class="tab-btn" data-view="settings"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>Settings</span></button>
+  </nav>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
