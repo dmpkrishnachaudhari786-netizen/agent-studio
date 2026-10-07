@@ -5,14 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#0b0f1a" />
 <title>Agent Studio — Real Android AI Agent + Web Builder</title>
-<meta name="description" content="Web console for the Real Android AI Agent and Web Builder: plan device actions with Gemini, run Python, build and deploy websites." />
+<meta name="description" content="Chat console for the Real Android AI Agent and Web Builder: send messages, plan device actions, run Python, build and deploy websites." />
 <link rel="manifest" href="manifest.webmanifest" />
 <link rel="icon" href="icons/icon-192.png" />
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
 <meta name="apple-mobile-web-app-capable" content="yes" />
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta property="og:title" content="Agent Studio" />
-<meta property="og:description" content="Plan device actions with Gemini, run Python, build and deploy websites — one console." />
+<meta property="og:description" content="Chat with the Android AI agent, run Python, build and deploy websites — one console." />
 <meta property="og:type" content="website" />
 <link rel="stylesheet" href="styles.css" />
 </head>
@@ -33,9 +33,9 @@
   </header>
 
   <nav class="sidebar" aria-label="Sections">
-    <button class="nav-btn active" data-view="planner">
+    <button class="nav-btn active" data-view="chat">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-      <span>Planner</span>
+      <span>Chat</span>
     </button>
     <button class="nav-btn" data-view="builder">
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v14H3z"/><path d="M3 9h18M8 21h8M12 17v4"/></svg>
@@ -52,31 +52,29 @@
   </nav>
 
   <main class="content">
-    <!-- PLANNER -->
-    <section class="view active" id="view-planner">
+    <!-- CHAT -->
+    <section class="view active" id="view-chat">
       <div class="view-head">
-        <h1>Action Planner</h1>
-        <p class="sub">Describe what you want the Android device to do. The agent returns a validated, allow-listed command your app can execute.</p>
+        <h1>Chat</h1>
+        <p class="sub">Type a message and hit send. The agent replies, and when a device action is needed it returns a validated, allow-listed command your Android app can execute.</p>
       </div>
 
-      <div class="card">
-        <label class="field">
-          <span>Command</span>
-          <textarea id="plannerInput" rows="3" placeholder="e.g. Open WhatsApp, or Share this text: meeting at 5pm"></textarea>
-        </label>
-        <div class="row gap wrap">
-          <button id="planBtn" class="btn primary">Plan action</button>
-          <label class="toggle"><input type="checkbox" id="allowSensitive" /> <span>Allow sensitive actions</span></label>
-        </div>
-        <div class="chips" id="plannerChips">
-          <button class="chip" data-cmd="Open WhatsApp">Open WhatsApp</button>
-          <button class="chip" data-cmd="Open wifi settings">Open wifi settings</button>
-          <button class="chip" data-cmd="Go back">Go back</button>
-          <button class="chip" data-cmd="Copy this to clipboard: hello world">Copy to clipboard</button>
-        </div>
+      <div class="chat card" id="chatLog" aria-live="polite"></div>
+
+      <div class="composer">
+        <textarea id="chatInput" rows="1" placeholder="Message Agent Studio…" aria-label="Message"></textarea>
+        <button id="sendBtn" class="btn primary send" type="button" aria-label="Send message" title="Send">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+        </button>
       </div>
 
-      <div id="plannerOutput" class="output" aria-live="polite"></div>
+      <div class="chips" id="chatChips">
+        <button class="chip" data-cmd="Open WhatsApp">Open WhatsApp</button>
+        <button class="chip" data-cmd="Open wifi settings">Open wifi settings</button>
+        <button class="chip" data-cmd="Go back">Go back</button>
+        <button class="chip" data-cmd="Copy this to clipboard: hello world">Copy to clipboard</button>
+      </div>
+      <p class="hint" id="chatHint"></p>
     </section>
 
     <!-- BUILDER -->
@@ -176,6 +174,25 @@ for i in range(3):
       </div>
 
       <div class="card">
+        <h2>AI model</h2>
+        <p class="hint">Pick a current Gemini model. <b>gemini-3.8-flash</b> is the latest generally-available Flash model. (gemini-2.0-* models are shut down.)</p>
+        <label class="field"><span>Model</span>
+          <input id="sGeminiModel" list="modelList" placeholder="gemini-3.8-flash" />
+          <datalist id="modelList">
+            <option value="gemini-3.8-flash"></option>
+            <option value="gemini-3.7-flash"></option>
+            <option value="gemini-3.6-flash"></option>
+            <option value="gemini-3.5-flash"></option>
+            <option value="gemini-3.5-flash-lite"></option>
+            <option value="gemini-3.1-flash-lite"></option>
+            <option value="gemini-3.1-pro-preview"></option>
+            <option value="gemini-3-flash-preview"></option>
+            <option value="gemini-2.5-flash"></option>
+          </datalist>
+        </label>
+      </div>
+
+      <div class="card">
         <h2>Backend (optional)</h2>
         <p class="hint">Connect to the FastAPI service to use its authenticated APIs and sandboxed Python. Leave blank to run fully in-browser.</p>
         <label class="field"><span>Backend URL</span><input id="sBackendUrl" placeholder="https://your-backend.example.com" /></label>
@@ -193,8 +210,8 @@ for i in range(3):
 
       <div class="card">
         <h2>Direct APIs (offline mode)</h2>
+        <p class="hint">Used only when no Python server or backend is connected. The key stays in this browser.</p>
         <label class="field"><span>Gemini API key</span><input id="sGeminiKey" type="password" placeholder="AIza…" /></label>
-        <label class="field"><span>Gemini model</span><input id="sGeminiModel" placeholder="gemini-2.5-flash" /></label>
         <label class="field"><span>Netlify token</span><input id="sNetlifyToken" type="password" placeholder="nfp_…" /></label>
         <label class="field"><span>Netlify site id (optional)</span><input id="sNetlifySite" placeholder="leave blank to create a new site" /></label>
         <div class="row gap wrap">
@@ -205,13 +222,13 @@ for i in range(3):
 
       <div class="card">
         <h2>About</h2>
-        <p class="hint">Agent Studio is the web console for the <b>Real Android AI Agent + Web Builder</b> project. Planning follows the project's allow-list: only declared tools with validated arguments are ever produced.</p>
+        <p class="hint">Agent Studio is the console for the <b>Real Android AI Agent + Web Builder</b> project. Planning follows the project's allow-list: only declared tools with validated arguments are ever produced.</p>
       </div>
     </section>
   </main>
 
   <nav class="tabbar" aria-label="Sections">
-    <button class="tab-btn active" data-view="planner"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>Planner</span></button>
+    <button class="tab-btn active" data-view="chat"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg><span>Chat</span></button>
     <button class="tab-btn" data-view="builder"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3h18v14H3z"/><path d="M3 9h18M8 21h8M12 17v4"/></svg><span>Builder</span></button>
     <button class="tab-btn" data-view="python"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg><span>Python</span></button>
     <button class="tab-btn" data-view="settings"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>Settings</span></button>
