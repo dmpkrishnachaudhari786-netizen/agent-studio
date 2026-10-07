@@ -57,6 +57,7 @@
       <div class="view-head">
         <h1>Chat</h1>
         <p class="sub">Type a message and hit send. The agent replies, and when a device action is needed it returns a validated, allow-listed command your Android app can execute.</p>
+        <p class="row gap center wrap" style="margin:8px 0 0"><span class="pill"><span class="dot" id="modelDot"></span>model: <b id="modelBadge">gemini-3.8-flash</b></span></p>
       </div>
 
       <div class="chat card" id="chatLog" aria-live="polite"></div>
@@ -187,7 +188,6 @@ for i in range(3):
             <option value="gemini-3.1-flash-lite"></option>
             <option value="gemini-3.1-pro-preview"></option>
             <option value="gemini-3-flash-preview"></option>
-            <option value="gemini-2.5-flash"></option>
           </datalist>
         </label>
       </div>
