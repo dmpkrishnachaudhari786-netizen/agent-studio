@@ -1,6 +1,6 @@
-/* Agent Studio — web console for the Real Android AI Agent + Web Builder.
-   Two run modes: (1) connected to the FastAPI backend, (2) fully in-browser
-   (Gemini REST + Pyodide + Netlify API). No fake functionality. */
+/* Agent Studio — console for the Real Android AI Agent + Web Builder.
+   Run modes: (1) local Python server (server.py), (2) FastAPI backend,
+   (3) fully in-browser with your own Gemini key. No fake functionality. */
 'use strict';
 
 const $  = (s, r = document) => r.querySelector(s);
@@ -9,16 +9,19 @@ const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
 const LS_KEY = 'agent-studio-settings-v1';
 const DEFAULT_SETTINGS = {
   backendUrl: '', user: 'admin', geminiKey: '',
-  geminiModel: 'gemini-2.5-flash', netlifyToken: '', netlifySite: ''
+  geminiModel: 'gemini-3.8-flash', netlifyToken: '', netlifySite: ''
 };
 
 const state = {
   settings: { ...DEFAULT_SETTINGS },
   token: null,
+  server: false,          // local Python server detected on same origin
+  history: [],            // [{role:'user'|'model', text}]
   files: [],
   activeFile: null,
   pyodide: null,
   pyodideLoading: null,
+  busy: false,
 };
 
 /* ---------------- persistence ---------------- */
@@ -27,12 +30,14 @@ function loadSettings() {
     const raw = localStorage.getItem(LS_KEY);
     if (raw) state.settings = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
     state.token = localStorage.getItem(LS_KEY + ':token') || null;
+    state.history = JSON.parse(localStorage.getItem(LS_KEY + ':history') || '[]');
   } catch (_) { /* corrupt storage — fall back to defaults */ }
 }
 function saveSettings() {
   localStorage.setItem(LS_KEY, JSON.stringify(state.settings));
   if (state.token) localStorage.setItem(LS_KEY + ':token', state.token);
   else localStorage.removeItem(LS_KEY + ':token');
+  localStorage.setItem(LS_KEY + ':history', JSON.stringify(state.history.slice(-40)));
 }
 
 /* ---------------- ui helpers ---------------- */
@@ -52,9 +57,17 @@ function setConn(mode, label) {
   $('#connLabel').textContent = label;
 }
 function updateConn() {
-  if (state.settings.backendUrl && state.token) setConn('on', 'Backend connected');
+  if (state.server) setConn('on', 'Python server');
+  else if (state.settings.backendUrl && state.token) setConn('on', 'Backend connected');
   else if (state.settings.geminiKey) setConn('on', 'Direct APIs mode');
   else setConn('', 'Offline mode');
+}
+function chatHint() {
+  const el = $('#chatHint');
+  if (state.server) el.textContent = 'Replies come from your local Python server.';
+  else if (state.settings.backendUrl && state.token) el.textContent = 'Replies come from your backend.';
+  else if (state.settings.geminiKey) el.textContent = 'Replies come straight from Gemini (' + state.settings.geminiModel + ').';
+  else el.textContent = 'No AI connected yet — add a Gemini key in Settings, or run server.py.';
 }
 
 /* ---------------- navigation ---------------- */
@@ -67,17 +80,21 @@ $$('.nav-btn, .tab-btn').forEach(btn => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   });
 });
+function goTo(view) {
+  const b = document.querySelector('.nav-btn[data-view="' + view + '"]') ||
+            document.querySelector('.tab-btn[data-view="' + view + '"]');
+  if (b) b.click();
+}
 
 /* ---------------- backend client ---------------- */
-async function backend(path, { method = 'GET', body, raw, headers = {} } = {}) {
+async function backend(path, { method = 'GET', body } = {}) {
   const base = state.settings.backendUrl.replace(/\/+$/, '');
   if (!base) throw new Error('Backend URL is not set (Settings).');
-  const h = { ...headers };
+  const h = {};
   if (state.token) h['Authorization'] = 'Bearer ' + state.token;
   if (body !== undefined) h['Content-Type'] = 'application/json';
   const res = await fetch(base + path, {
-    method, headers: h,
-    body: raw !== undefined ? raw : (body !== undefined ? JSON.stringify(body) : undefined)
+    method, headers: h, body: body !== undefined ? JSON.stringify(body) : undefined
   });
   const text = await res.text();
   let data; try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { detail: text }; }
@@ -86,6 +103,17 @@ async function backend(path, { method = 'GET', body, raw, headers = {} } = {}) {
     throw new Error(typeof msg === 'string' ? msg : JSON.stringify(msg));
   }
   return data;
+}
+
+/* Detect the local Python server (server.py) on this origin. */
+async function probeServer() {
+  try {
+    const res = await fetch('api/health', { headers: { 'Accept': 'application/json' } });
+    if (!res.ok) return false;
+    const j = await res.json();
+    state.server = j && j.server === 'agent-studio';
+    return state.server;
+  } catch (_) { return false; }
 }
 
 /* ---------------- allow-list (mirrors backend/app/allowlist.py) ---------------- */
@@ -120,73 +148,116 @@ const TOOL_DECLARATIONS = [
   { name: 'clipboard_set', description: 'Write text to the Android clipboard.', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
 ];
 
-/* ---------------- planner ---------------- */
-async function planWithGemini(command) {
+/* ---------------- chat ---------------- */
+function appendMsg(role, html) {
+  const log = $('#chatLog');
+  const wrap = document.createElement('div');
+  wrap.className = 'msg ' + role;
+  wrap.innerHTML = '<div class="bubble">' + html + '</div>';
+  log.appendChild(wrap);
+  log.scrollTop = log.scrollHeight;
+  return wrap;
+}
+function renderHistory() {
+  const log = $('#chatLog');
+  log.innerHTML = '';
+  state.history.forEach(m => {
+    const who = m.role === 'user' ? '' : '<div class="who">Agent</div>';
+    appendMsg(m.role === 'user' ? 'user' : 'ai', who + esc(m.text));
+  });
+}
+function bubbleFor(res) {
+  let html = esc(res.text || res.message || '');
+  if (res.tool_call) {
+    html += '<div><span class="tool">' + esc(res.tool_call.name) + '</span></div>';
+    html += '<div class="kv">' + esc(JSON.stringify(res.tool_call.args, null, 2)) + '</div>';
+    html += '<div class="hint" style="margin-top:6px">Validated against the allow-list. The Android app executes it after its own permission checks.</div>';
+  }
+  return html;
+}
+
+/* Direct Gemini call — current API (Gemini 3.x): key via header, no temperature. */
+async function callGemini(message) {
   const key = state.settings.geminiKey;
-  if (!key) throw new Error('Gemini API key is not set (Settings).');
-  const model = state.settings.geminiModel || 'gemini-2.5-flash';
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`;
+  if (!key) throw new Error('No Gemini API key set.');
+  const model = state.settings.geminiModel || 'gemini-3.8-flash';
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+  const contents = state.history.slice(-12).map(m => ({
+    role: m.role === 'model' ? 'model' : 'user',
+    parts: [{ text: m.text }]
+  }));
+  contents.push({ role: 'user', parts: [{ text: message }] });
   const body = {
-    contents: [{ role: 'user', parts: [{ text: command }] }],
+    contents,
     tools: [{ function_declarations: TOOL_DECLARATIONS }],
-    system_instruction: { parts: [{ text: 'You are an Android task planner. Choose only declared tools. Never invent permissions or capabilities. For app launching, return an actual Android package name only when you can infer one confidently; otherwise ask the user to provide it.' }] },
-    generationConfig: { temperature: 0.1 }
+    system_instruction: { parts: [{ text: 'You are an Android task planner. Reply briefly and helpfully. Choose only declared tools. Never invent permissions or capabilities. For app launching, return an actual Android package name only when you can infer one confidently; otherwise ask the user to provide it.' }] }
   };
-  const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+    body: JSON.stringify(body)
+  });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data.error && data.error.message) || ('Gemini HTTP ' + res.status));
   const parts = (((data.candidates || [])[0] || {}).content || {}).parts || [];
   for (const part of parts) {
     if (part.functionCall) {
-      const name = part.functionCall.name;
-      const args = part.functionCall.args || {};
-      if (!(name in ALLOWED)) return { message: 'Model requested an unsupported action.', tool_call: null };
-      return { message: 'Planned action: ' + name, tool_call: { name, args } };
+      const name = part.functionCall.name, args = part.functionCall.args || {};
+      if (!(name in ALLOWED)) return { text: 'Model requested an unsupported action.' };
+      let safe = args;
+      try { safe = validateTool(name, args); }
+      catch (e) { return { text: 'Planned tool rejected by the allow-list: ' + e.message }; }
+      return { text: 'Planned action: ' + name, tool_call: { name, args: safe } };
     }
   }
   const text = parts.map(p => p.text || '').join('').trim();
-  return { message: text || 'No actionable command returned.', tool_call: null };
+  return { text: text || 'No response returned.' };
 }
 
-function renderPlan(res, source, rawArgs) {
-  const out = $('#plannerOutput');
-  let html = `<div class="res"><span class="tag ok">${esc(source)}</span><p>${esc(res.message)}</p>`;
-  if (res.tool_call) {
-    html += `<p>Tool: <span class="tool-name">${esc(res.tool_call.name)}</span></p>`;
-    html += `<div class="kv">${esc(JSON.stringify(res.tool_call.args, null, 2))}</div>`;
-    html += `<p class="hint" style="margin-top:10px">Validated against the project allow-list. The Android app executes this command after its own permission checks.</p>`;
-  } else if (rawArgs && rawArgs.rejected) {
-    html += `<div class="kv">${esc(rawArgs.rejected)}</div>`;
-  }
-  html += `</div>`;
-  out.innerHTML = html;
-}
+async function sendMessage(rawText) {
+  const text = (rawText !== undefined ? rawText : $('#chatInput').value).trim();
+  if (!text || state.busy) return;
+  $('#chatInput').value = '';
+  autoGrow();
+  state.history.push({ role: 'user', text });
+  appendMsg('user', esc(text));
+  const typing = appendMsg('ai', '<span class="typing"><span></span><span></span><span></span></span>');
 
-async function doPlan() {
-  const command = $('#plannerInput').value.trim();
-  if (!command) { toast('Enter a command first.', 'err'); return; }
-  const allowSensitive = $('#allowSensitive').checked;
-  const btn = $('#planBtn');
-  btn.disabled = true;
-  $('#plannerOutput').innerHTML = `<div class="res"><span class="spinner"></span> Planning…</div>`;
+  state.busy = true;
+  $('#sendBtn').disabled = true;
   try {
-    let res, source;
-    if (state.settings.backendUrl && state.token) {
-      res = await backend('/api/agent/plan', { method: 'POST', body: { command, allow_sensitive_actions: allowSensitive } });
-      source = 'Backend · /api/agent/plan';
+    let res;
+    if (state.server) {
+      const r = await fetch('api/chat', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, model: state.settings.geminiModel, history: state.history.slice(-12) })
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || ('Server HTTP ' + r.status));
+      res = { text: d.reply, tool_call: d.tool_call };
+    } else if (state.settings.backendUrl && state.token) {
+      const d = await backend('/api/agent/plan', { method: 'POST', body: { command: text } });
+      res = { text: d.message, tool_call: d.tool_call };
     } else {
-      res = await planWithGemini(command);
-      source = 'Direct · Gemini';
-      if (res.tool_call) {
-        try { res.tool_call.args = validateTool(res.tool_call.name, res.tool_call.args); }
-        catch (e) { res = { message: 'Planned tool rejected by allow-list.', tool_call: null }; renderPlan(res, source, { rejected: e.message }); return; }
-      }
+      res = await callGemini(text);
     }
-    renderPlan(res, source);
+    typing.remove();
+    appendMsg('ai', '<div class="who">Agent</div>' + bubbleFor(res));
+    state.history.push({ role: 'model', text: res.text });
+    saveSettings();
   } catch (err) {
-    $('#plannerOutput').innerHTML = `<div class="res"><span class="tag err">Error</span><p>${esc(err.message)}</p>
-      <p class="hint">${state.settings.backendUrl ? 'Check the backend URL and your login.' : 'Add a Gemini API key in Settings, or connect a backend.'}</p></div>`;
-  } finally { btn.disabled = false; }
+    typing.remove();
+    appendMsg('err', '<div class="who">Error</div>' + esc(err.message) +
+      '<div class="hint" style="margin-top:6px">Add a Gemini key in Settings, or run server.py, then try again.</div>');
+  } finally {
+    state.busy = false;
+    $('#sendBtn').disabled = false;
+  }
+}
+function autoGrow() {
+  const t = $('#chatInput');
+  t.style.height = 'auto';
+  t.style.height = Math.min(t.scrollHeight, 130) + 'px';
 }
 
 /* ---------------- web builder ---------------- */
@@ -235,7 +306,6 @@ function logTo(el, msg, kind) {
   const cls = kind === 'err' ? 'err' : kind === 'ok' ? 'ok' : '';
   el.innerHTML = `<span class="${cls}">${esc(msg)}</span>`;
 }
-
 function entryHtml() {
   const entry = state.files.find(f => f.path === 'index.html');
   if (!entry) return null;
@@ -249,17 +319,14 @@ function entryHtml() {
     return state.files.find(f => f.path.split('/').pop() === base) || null;
   };
   let html = entry.content;
-  // inline local stylesheets
   html = html.replace(/<link\b[^>]*href=["']([^"']+)["'][^>]*>/gi, (m, href) => {
     const f = lookup(href);
     return f && /\.css$/i.test(f.path) ? '<style>\n' + f.content + '\n</style>' : m;
   });
-  // inline local scripts
   html = html.replace(/<script\b[^>]*src=["']([^"']+)["'][^>]*>\s*<\/script>/gi, (m, src) => {
     const f = lookup(src);
     return f && /\.js$/i.test(f.path) ? '<script>\n' + f.content + '\n</script>' : m;
   });
-  // inline local images as data URLs (works inside a sandboxed frame)
   html = html.replace(/\b(src|href)=["']([^"']+\.(?:png|jpe?g|gif|webp|svg))["']/gi, (m, attr, path) => {
     const f = lookup(path);
     if (!f) return m;
@@ -277,7 +344,6 @@ function mimeFor(p) {
   if (/\.(png|jpe?g|gif|webp)$/i.test(p)) return 'image/*';
   return 'text/plain';
 }
-
 function doPreview() {
   const html = entryHtml();
   const log = $('#builderLog');
@@ -287,7 +353,6 @@ function doPreview() {
   frame.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   logTo(log, 'Preview rendered from index.html (' + state.files.length + ' file(s)).', 'ok');
 }
-
 function doValidate() {
   const log = $('#builderLog');
   const framework = $('#framework').value;
@@ -343,7 +408,6 @@ function doZip() {
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
   logTo($('#builderLog'), 'ZIP built with ' + state.files.length + ' file(s) and downloaded.', 'ok');
 }
-
 async function doDeploy() {
   const log = $('#builderLog');
   const framework = $('#framework').value;
@@ -381,7 +445,7 @@ async function doDeploy() {
 
 /* ---------------- python ---------------- */
 function pyEngineLabel() {
-  const connected = state.settings.backendUrl && state.token;
+  const connected = state.server || (state.settings.backendUrl && state.token);
   $('#pyEngineHint').textContent = connected ? 'Runs on the backend sandbox.' : 'Runs in your browser via Pyodide (loads once).';
 }
 async function ensurePyodide() {
@@ -395,9 +459,8 @@ async function ensurePyodide() {
       s.onload = resolve; s.onerror = () => reject(new Error('Could not load Pyodide from CDN.'));
       document.head.appendChild(s);
     });
-    const py = await window.loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/' });
-    state.pyodide = py;
-    return py;
+    state.pyodide = await window.loadPyodide({ indexURL: 'https://cdn.jsdelivr.net/pyodide/v0.26.4/full/' });
+    return state.pyodide;
   })();
   return state.pyodideLoading;
 }
@@ -447,7 +510,7 @@ function readSettings() {
   s.backendUrl = $('#sBackendUrl').value.trim();
   s.user = $('#sUser').value.trim() || 'admin';
   s.geminiKey = $('#sGeminiKey').value.trim();
-  s.geminiModel = $('#sGeminiModel').value.trim() || 'gemini-2.5-flash';
+  s.geminiModel = $('#sGeminiModel').value.trim() || 'gemini-3.8-flash';
   s.netlifyToken = $('#sNetlifyToken').value.trim();
   s.netlifySite = $('#sNetlifySite').value.trim();
 }
@@ -458,7 +521,7 @@ async function doLogin() {
   try {
     const r = await backend('/api/auth/login', { method: 'POST', body: { username: state.settings.user, password: pass } });
     state.token = r.access_token;
-    saveSettings(); fillSettings(); updateConn(); pyEngineLabel();
+    saveSettings(); fillSettings(); updateConn(); pyEngineLabel(); chatHint();
     $('#sPass').value = '';
     toast('Logged in.', 'ok');
   } catch (err) { toast('Login failed: ' + err.message, 'err'); }
@@ -474,12 +537,16 @@ async function doHealth() {
 
 /* ---------------- wire up ---------------- */
 function init() {
-  loadSettings(); fillSettings(); updateConn(); pyEngineLabel();
+  loadSettings(); fillSettings(); updateConn(); pyEngineLabel(); chatHint();
+  renderHistory();
 
-  // planner
-  $('#planBtn').addEventListener('click', doPlan);
-  $('#plannerInput').addEventListener('keydown', e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') doPlan(); });
-  $$('#plannerChips .chip').forEach(c => c.addEventListener('click', () => { $('#plannerInput').value = c.dataset.cmd; $('#plannerInput').focus(); }));
+  // chat
+  $('#sendBtn').addEventListener('click', () => sendMessage());
+  $('#chatInput').addEventListener('input', autoGrow);
+  $('#chatInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
+  });
+  $$('#chatChips .chip').forEach(c => c.addEventListener('click', () => { $('#chatInput').value = c.dataset.cmd; sendMessage(); }));
 
   // builder
   $('#addFileBtn').addEventListener('click', addFile);
@@ -502,29 +569,27 @@ function init() {
   $('#runPyBtn').addEventListener('click', runPython);
 
   // settings
-  $('#saveSettingsBtn').addEventListener('click', () => { readSettings(); saveSettings(); updateConn(); pyEngineLabel(); toast('Settings saved.', 'ok'); });
+  $('#saveSettingsBtn').addEventListener('click', () => { readSettings(); saveSettings(); updateConn(); chatHint(); toast('Settings saved.', 'ok'); });
   $('#loginBtn').addEventListener('click', doLogin);
   $('#healthBtn').addEventListener('click', doHealth);
-  $('#logoutBtn').addEventListener('click', () => { state.token = null; saveSettings(); fillSettings(); updateConn(); pyEngineLabel(); toast('Logged out.'); });
+  $('#logoutBtn').addEventListener('click', () => { state.token = null; saveSettings(); fillSettings(); updateConn(); pyEngineLabel(); chatHint(); toast('Logged out.'); });
   $('#clearSettingsBtn').addEventListener('click', () => {
-    if (!confirm('Clear all settings, token and files from this browser?')) return;
-    localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_KEY + ':token');
-    state.settings = { ...DEFAULT_SETTINGS }; state.token = null; state.files = []; state.activeFile = null;
-    fillSettings(); renderFiles(); $('#fileEditor').value = ''; $('#editorTitle').textContent = 'Select a file';
-    updateConn(); pyEngineLabel(); toast('Cleared.');
+    if (!confirm('Clear all settings, token, chat and files from this browser?')) return;
+    localStorage.removeItem(LS_KEY); localStorage.removeItem(LS_KEY + ':token'); localStorage.removeItem(LS_KEY + ':history');
+    state.settings = { ...DEFAULT_SETTINGS }; state.token = null; state.history = []; state.files = []; state.activeFile = null;
+    fillSettings(); renderHistory(); renderFiles(); $('#fileEditor').value = ''; $('#editorTitle').textContent = 'Select a file';
+    updateConn(); pyEngineLabel(); chatHint(); toast('Cleared.');
   });
-  $('#connPill').addEventListener('click', () => {
-    $$('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === 'settings'));
-    $$('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.view === 'settings'));
-    $$('.view').forEach(v => v.classList.toggle('active', v.id === 'view-settings'));
-  });
+  $('#connPill').addEventListener('click', () => goTo('settings'));
 
   // seed files
   state.files = TEMPLATE.map(f => ({ ...f }));
   selectFile('index.html');
 
-  // service worker
-  if ('serviceWorker' in navigator) {
+  // detect local Python server, then refresh status
+  probeServer().then(() => { updateConn(); pyEngineLabel(); chatHint(); });
+
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
   }
 }
