@@ -17,12 +17,16 @@ A single, dependency-free PWA with four sections:
 - **Settings** — pick the AI model, connect a backend, or add your own Gemini / Netlify keys.
   Stored only in this browser (localStorage). No secrets are shipped in the source.
 
-## Three ways to run the chat
+## How the chat replies (in priority order)
 
 1. **Local Python server** (recommended) — `server.py` serves the app and calls Gemini
    server-side, so your key never reaches the browser and there is no CORS problem.
 2. **FastAPI backend** — point Settings at your backend URL and log in.
 3. **Direct in-browser** — paste your own Gemini API key in Settings.
+4. **Built-in offline planner** — no key, no server, no internet. Matches common device
+   commands (open app, open settings, back, home, share, clipboard) to real allow-listed
+   tool calls, using the exact actions the Android app supports. Every reply is labelled
+   with the engine that produced it.
 
 ## Run the Python server
 
@@ -37,8 +41,8 @@ Optional environment variables: `GEMINI_MODEL` (default `gemini-3.8-flash`),
 ## Model
 
 The default model is **`gemini-3.8-flash`**, the latest generally-available Flash model.
-Note that the older `gemini-2.0-*` models are shut down, and `gemini-2.5-*` is limited to
-existing users — pick a current 3.x model in Settings.
+Older `gemini-2.0-*` models are shut down and `gemini-2.5-*` is limited to existing users;
+the app automatically migrates any stale saved model id to a current 3.x model.
 
 ## Security model
 
