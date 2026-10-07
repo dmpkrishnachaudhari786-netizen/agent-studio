@@ -29,6 +29,8 @@ function loadSettings() {
   try {
     const raw = localStorage.getItem(LS_KEY);
     if (raw) state.settings = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    // migrate retired/legacy model ids (2.x, 1.x) to the current default
+    if (!/^gemini-3/.test(state.settings.geminiModel || '')) state.settings.geminiModel = DEFAULT_SETTINGS.geminiModel;
     state.token = localStorage.getItem(LS_KEY + ':token') || null;
     state.history = JSON.parse(localStorage.getItem(LS_KEY + ':history') || '[]');
   } catch (_) { /* corrupt storage — fall back to defaults */ }
@@ -64,10 +66,14 @@ function updateConn() {
 }
 function chatHint() {
   const el = $('#chatHint');
-  if (state.server) el.textContent = 'Replies come from your local Python server.';
-  else if (state.settings.backendUrl && state.token) el.textContent = 'Replies come from your backend.';
-  else if (state.settings.geminiKey) el.textContent = 'Replies come straight from Gemini (' + state.settings.geminiModel + ').';
-  else el.textContent = 'No AI connected yet — add a Gemini key in Settings, or run server.py.';
+  let engine;
+  if (state.server) engine = 'Engine: Python server';
+  else if (state.settings.backendUrl && state.token) engine = 'Engine: backend';
+  else if (state.settings.geminiKey) engine = 'Engine: Gemini · ' + state.settings.geminiModel;
+  else engine = 'Engine: Offline planner (no key needed)';
+  const badge = $('#modelBadge');
+  if (badge) badge.textContent = state.settings.geminiModel;
+  el.textContent = engine + (state.settings.geminiKey || state.server ? '' : ' — free-form messages need a key or server.py.');
 }
 
 /* ---------------- navigation ---------------- */
@@ -137,6 +143,65 @@ function validateTool(name, args) {
   const extra = Object.keys(args).filter(k => !(k in spec));
   if (extra.length) throw new Error('Unexpected argument(s) for ' + name + ': ' + extra.join(', '));
   return out;
+}
+
+/* ---- built-in offline planner: real, deterministic, needs no key ---- */
+const APP_MAP = {
+  whatsapp: 'com.whatsapp', youtube: 'com.google.android.youtube', chrome: 'com.android.chrome',
+  gmail: 'com.google.android.gm', maps: 'com.google.android.apps.maps', 'google maps': 'com.google.android.apps.maps',
+  photos: 'com.google.android.apps.photos', gallery: 'com.google.android.apps.photos',
+  settings: 'com.android.settings', calculator: 'com.google.android.calculator',
+  clock: 'com.google.android.deskclock', alarm: 'com.google.android.deskclock',
+  contacts: 'com.android.contacts', messages: 'com.google.android.apps.messaging', sms: 'com.google.android.apps.messaging',
+  phone: 'com.google.android.dialer', dialer: 'com.google.android.dialer',
+  instagram: 'com.instagram.android', facebook: 'com.facebook.katana',
+  telegram: 'org.telegram.messenger', spotify: 'com.spotify.music',
+  'play store': 'com.android.vending', playstore: 'com.android.vending',
+  files: 'com.google.android.documentsui', calendar: 'com.google.android.calendar',
+  drive: 'com.google.android.apps.docs', netflix: 'com.netflix.mediaclient',
+  twitter: 'com.twitter.android', x: 'com.twitter.android',
+};
+const SETTINGS_MAP = {
+  wifi: 'android.settings.WIFI_SETTINGS', bluetooth: 'android.settings.BLUETOOTH_SETTINGS',
+  accessibility: 'android.settings.ACCESSIBILITY_SETTINGS',
+  'notification listener': 'android.settings.NOTIFICATION_LISTENER_SETTINGS',
+  notifications: 'android.settings.NOTIFICATION_LISTENER_SETTINGS',
+  'app notification': 'android.settings.APP_NOTIFICATION_SETTINGS',
+  'app details': 'android.settings.APPLICATION_DETAILS_SETTINGS',
+  settings: 'android.settings.SETTINGS',
+};
+function offlinePlan(text) {
+  try {
+    const t = text.toLowerCase().trim();
+    let m = text.match(/^\s*(?:share|bhejo|bhej)\b[\s:,-]*(?:this\s+text[\s:,-]*)?(.*)$/i);
+    if (m && m[1].trim()) {
+      return { text: 'Share this text?', tool_call: { name: 'share_text', args: validateTool('share_text', { text: m[1].trim() }) }, source: 'Offline planner' };
+    }
+    m = text.match(/^\s*(?:copy|clipboard)\b[\s:,-]*(.*?)(?:\s+to\s+clipboard)?\s*$/i);
+    if (m && m[1].trim()) {
+      return { text: 'Copied to the clipboard.', tool_call: { name: 'clipboard_set', args: validateTool('clipboard_set', { text: m[1].trim() }) }, source: 'Offline planner' };
+    }
+    if (/^(?:go\s+)?back$|^wapas$|^peeche$/.test(t)) return { text: 'Go back.', tool_call: { name: 'back', args: {} }, source: 'Offline planner' };
+    if (/^(?:go\s+)?home$|^ghar$/.test(t)) return { text: 'Go home.', tool_call: { name: 'home', args: {} }, source: 'Offline planner' };
+    if (/settings|setting|se?tt?ing/.test(t)) {
+      for (const [kw, action] of Object.entries(SETTINGS_MAP)) {
+        if (kw === 'settings' ? /(^|\s)settings(\s|$)/.test(t) : t.includes(kw)) {
+          return { text: 'Open ' + kw + ' settings.', tool_call: { name: 'open_settings', args: validateTool('open_settings', { action }) }, source: 'Offline planner' };
+        }
+      }
+    }
+    m = t.match(/^(?:open|launch|start|kholo|khol|chalao|chala)\s+(.+?)(?:\s+app)?$/i);
+    if (m) {
+      const target = m[1].trim().replace(/^the\s+/, '');
+      if (APP_MAP[target]) {
+        return { text: 'Open ' + target + '.', tool_call: { name: 'open_app', args: { package_name: APP_MAP[target] } }, source: 'Offline planner' };
+      }
+      if (/^[a-z][a-z0-9_]*(?:\.[a-z0-9_]+)+$/i.test(target)) {
+        return { text: 'Open ' + target + '.', tool_call: { name: 'open_app', args: validateTool('open_app', { package_name: target }) }, source: 'Offline planner' };
+      }
+    }
+  } catch (_) { /* fall through */ }
+  return null;
 }
 
 const TOOL_DECLARATIONS = [
@@ -226,7 +291,7 @@ async function sendMessage(rawText) {
   state.busy = true;
   $('#sendBtn').disabled = true;
   try {
-    let res;
+    let res, source;
     if (state.server) {
       const r = await fetch('api/chat', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -234,25 +299,56 @@ async function sendMessage(rawText) {
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(d.error || ('Server HTTP ' + r.status));
-      res = { text: d.reply, tool_call: d.tool_call };
+      res = { text: d.reply, tool_call: d.tool_call }; source = 'Python server';
     } else if (state.settings.backendUrl && state.token) {
       const d = await backend('/api/agent/plan', { method: 'POST', body: { command: text } });
-      res = { text: d.message, tool_call: d.tool_call };
+      res = { text: d.message, tool_call: d.tool_call }; source = 'Backend';
+    } else if (state.settings.geminiKey) {
+      res = await callGemini(text); source = 'Gemini · ' + state.settings.geminiModel;
     } else {
-      res = await callGemini(text);
+      res = offlinePlan(text);
+      if (!res) { typing.remove(); showSetupCard(); state.busy = false; $('#sendBtn').disabled = false; return; }
+      source = res.source;
     }
     typing.remove();
-    appendMsg('ai', '<div class="who">Agent</div>' + bubbleFor(res));
+    appendMsg('ai', '<div class="who">Agent · ' + esc(source) + '</div>' + bubbleFor(res));
     state.history.push({ role: 'model', text: res.text });
     saveSettings();
   } catch (err) {
     typing.remove();
-    appendMsg('err', '<div class="who">Error</div>' + esc(err.message) +
-      '<div class="hint" style="margin-top:6px">Add a Gemini key in Settings, or run server.py, then try again.</div>');
+    const offline = offlinePlan(text);
+    if (offline) {
+      appendMsg('ai', '<div class="who">Agent · ' + esc(offline.source) + '</div>' + bubbleFor(offline) +
+        '<div class="hint" style="margin-top:6px">(AI was unavailable: ' + esc(err.message) + ')</div>');
+      state.history.push({ role: 'model', text: offline.text });
+      saveSettings();
+    } else {
+      appendMsg('err', '<div class="who">Error</div>' + esc(err.message) +
+        '<div class="hint" style="margin-top:6px">Add a Gemini key in Settings, or run server.py, then try again.</div>');
+    }
   } finally {
     state.busy = false;
     $('#sendBtn').disabled = false;
   }
+}
+
+/* shown when a message needs full AI but none is configured */
+function showSetupCard() {
+  const wrap = appendMsg('ai',
+    '<div class="who">Setup needed</div>' +
+    '<div>I could not match that to a device action. Connect an AI model to handle free-form messages.</div>' +
+    '<div style="margin-top:8px"><input id="inlineKey" type="password" placeholder="Paste your Gemini API key" /></div>' +
+    '<div style="margin-top:8px"><button class="btn primary small" id="inlineKeySave">Save key &amp; use Gemini</button></div>' +
+    '<div class="hint" style="margin-top:6px">Try “Open WhatsApp”, “Open wifi settings”, “Go back”, “Share: hello”. Or run <code>python3 server.py</code>.</div>');
+  const btn = wrap.querySelector('#inlineKeySave');
+  btn.addEventListener('click', () => {
+    const v = wrap.querySelector('#inlineKey').value.trim();
+    if (!v) { toast('Paste a key first.', 'err'); return; }
+    state.settings.geminiKey = v; saveSettings();
+    $('#sGeminiKey').value = v; updateConn(); chatHint();
+    toast('Key saved. Send your message again.', 'ok');
+    wrap.remove();
+  });
 }
 function autoGrow() {
   const t = $('#chatInput');
